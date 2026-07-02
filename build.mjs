@@ -70,6 +70,22 @@ async function lottoAmerica(){
   return methods(hist,52,10);
 }
 
-const [pb,la] = await Promise.all([powerball(), lottoAmerica()]);
+// Jackpots: cash value (drives the take-home) from lotteryusa; annuity estimated from it.
+async function jackpots(){
+  const out={};
+  for(const [game,url,minCash,ratio] of [['powerball','https://www.lotteryusa.com/powerball/',20e6,0.47],['lottoAmerica','https://www.lotteryusa.com/lotto-america/',2e6,0.46]]){
+    try{
+      const h = await (await fetch(url,{headers:{'User-Agent':'Mozilla/5.0'}})).text();
+      const m = h.match(/Cash value:?\s*\$?\s*([0-9][0-9.,]*)\s*(Million|Billion)/i);
+      if(m){ const cash = Math.round(parseFloat(m[1].replace(/,/g,'')) * (/billion/i.test(m[2])?1e9:1e6));
+        if(cash>=minCash && cash<1e10) out[game] = { cashLumpSum:cash, advertisedAnnuity:Math.round(cash/ratio/1e6)*1e6 }; }
+    }catch(e){ console.log('jackpot',game,'failed:',e.message); }
+  }
+  return out;
+}
+
+const [pb,la,jp] = await Promise.all([powerball(), lottoAmerica(), jackpots()]);
+if(jp.powerball){ pb.advertisedAnnuity=jp.powerball.advertisedAnnuity; pb.cashLumpSum=jp.powerball.cashLumpSum; }
+if(jp.lottoAmerica){ la.advertisedAnnuity=jp.lottoAmerica.advertisedAnnuity; la.cashLumpSum=jp.lottoAmerica.cashLumpSum; }
 fs.writeFileSync('./data.json', JSON.stringify({ updated:new Date().toISOString(), powerball:pb, lottoAmerica:la }));
-console.log('data.json OK — PB', pb.draws, 'draws edge', pb.ticketEdge.white.join(''), '| LA', la.draws, 'draws edge', la.ticketEdge.white.join(''));
+console.log('data.json OK — PB', pb.draws, 'edge', pb.ticketEdge.white.join(''), 'cash', pb.cashLumpSum, '| LA', la.draws, 'edge', la.ticketEdge.white.join(''), 'cash', la.cashLumpSum);
