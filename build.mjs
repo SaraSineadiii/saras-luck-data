@@ -89,8 +89,18 @@ const [pb,la,jp] = await Promise.all([powerball(), lottoAmerica(), jackpots()]);
 // carry forward the last-known jackpot if a scrape came back empty, so cash never goes stale/undefined
 let prev={}; try{ prev=JSON.parse(fs.readFileSync('./data.json','utf8')); }catch(e){}
 for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
+  const prevAnn = prev[g] && prev[g].advertisedAnnuity;
   if(jp[g]){ obj.advertisedAnnuity=jp[g].advertisedAnnuity; obj.cashLumpSum=jp[g].cashLumpSum; }
   else if(prev[g]&&prev[g].cashLumpSum){ obj.advertisedAnnuity=prev[g].advertisedAnnuity; obj.cashLumpSum=prev[g].cashLumpSum; console.log(g,'jackpot scrape empty — carried forward last-known cash',prev[g].cashLumpSum); }
+  // Jackpot outcome of the most recent draw, inferred from the jackpot trajectory (autonomous, no fragile winner-scrape):
+  // a big DROP means the jackpot was hit and reset (someone won); growth means it rolled over (no jackpot winner).
+  const newAnn = obj.advertisedAnnuity;
+  let outcome = (prev[g] && prev[g].jackpotOutcome) || { status:'rolled', jackpotNow:newAnn };
+  if(prevAnn && newAnn && Math.abs(newAnn-prevAnn) > 2e6){
+    outcome = newAnn < prevAnn ? { status:'won', prize:prevAnn, jackpotNow:newAnn, on:obj.dataThrough }
+                               : { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
+  } else { outcome = { ...outcome, jackpotNow:newAnn }; }
+  obj.jackpotOutcome = outcome;
 }
 fs.writeFileSync('./data.json', JSON.stringify({ updated:new Date().toISOString(), powerball:pb, lottoAmerica:la }));
 console.log('data.json OK — PB', pb.draws, 'edge', pb.ticketEdge.white.join(''), 'cash', pb.cashLumpSum, '| LA', la.draws, 'edge', la.ticketEdge.white.join(''), 'cash', la.cashLumpSum);
