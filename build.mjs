@@ -86,7 +86,11 @@ async function jackpots(){
 }
 
 const [pb,la,jp] = await Promise.all([powerball(), lottoAmerica(), jackpots()]);
-if(jp.powerball){ pb.advertisedAnnuity=jp.powerball.advertisedAnnuity; pb.cashLumpSum=jp.powerball.cashLumpSum; }
-if(jp.lottoAmerica){ la.advertisedAnnuity=jp.lottoAmerica.advertisedAnnuity; la.cashLumpSum=jp.lottoAmerica.cashLumpSum; }
+// carry forward the last-known jackpot if a scrape came back empty, so cash never goes stale/undefined
+let prev={}; try{ prev=JSON.parse(fs.readFileSync('./data.json','utf8')); }catch(e){}
+for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
+  if(jp[g]){ obj.advertisedAnnuity=jp[g].advertisedAnnuity; obj.cashLumpSum=jp[g].cashLumpSum; }
+  else if(prev[g]&&prev[g].cashLumpSum){ obj.advertisedAnnuity=prev[g].advertisedAnnuity; obj.cashLumpSum=prev[g].cashLumpSum; console.log(g,'jackpot scrape empty — carried forward last-known cash',prev[g].cashLumpSum); }
+}
 fs.writeFileSync('./data.json', JSON.stringify({ updated:new Date().toISOString(), powerball:pb, lottoAmerica:la }));
 console.log('data.json OK — PB', pb.draws, 'edge', pb.ticketEdge.white.join(''), 'cash', pb.cashLumpSum, '| LA', la.draws, 'edge', la.ticketEdge.white.join(''), 'cash', la.cashLumpSum);
