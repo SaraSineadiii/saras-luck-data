@@ -22,6 +22,7 @@ function methods(rows,pool,spool){
   const ew=app.map((v,i)=>({n:i+1,p:v})).sort((a,b)=>b.p-a.p||wf[b.n-1]-wf[a.n-1]).slice(0,5).map(x=>x.n).sort((a,b)=>a-b);
   return { draws:rows.length, whiteFreq:wf, specialFreq:sf,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
+    history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     dataThrough: rows.length ? rows[rows.length-1].date : null };
 }
 
