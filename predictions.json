@@ -1,0 +1,8 @@
+{
+  "_note": "PRE-REGISTERED prospective predictions. The git commit timestamp is tamper-proof proof of WHEN each prediction was locked in — before the draw. Compare to the actual result afterward. This is the only design that rules out hindsight/in-sample self-deception.",
+  "method": "consensus edge (max frequency + recency + persistence on the correct data window)",
+  "predictions": [
+    { "game": "Powerball",    "target_draw": "2026-07-04", "white": [21,28,52,61,64], "special_PB": 14 },
+    { "game": "Lotto America","target_draw": "2026-07-04", "white": [5,8,42,47,51],  "special_SB": 4  }
+  ]
+}
