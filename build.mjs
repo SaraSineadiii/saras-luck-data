@@ -49,7 +49,17 @@ function methods(rows,pool,spool){
   };
   choose(0,[]);
   const fusion={ white: bestSet||ew, special: top(sf,1)[0] };
-  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion,
+  // The one real lead: is any special ball significantly over-represented? Multiple-comparison corrected,
+  // so it self-confirms or regresses as future draws land. (LA star-4 flagged at corrected p~0.003.)
+  const specialBias=(()=>{ const D=rows.length, E=D/spool; let hot=1; for(let i=0;i<spool;i++) if(sf[i]>sf[hot-1]) hot=i+1;
+    const cnt=sf[hot-1], z=(cnt-E)/Math.sqrt(E*(1-1/spool));
+    let chi=0; for(let i=0;i<spool;i++) chi+=(sf[i]-E)**2/E;
+    const erf=x=>{const s=x<0?-1:1;x=Math.abs(x);const t=1/(1+0.3275911*x);return s*(1-(((((1.061405429*t-1.453152027)*t+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x)));};
+    const pCell=1-erf(Math.abs(z)/Math.SQRT2), pCorr=1-Math.pow(1-pCell,spool);
+    return { hot, count:cnt, rate:+(cnt/D).toFixed(4), expected:+E.toFixed(1), z:+z.toFixed(2), chi:+chi.toFixed(2), df:spool-1, pCorrected:+pCorr.toFixed(4), draws:D,
+      significant: pCorr<0.05 };
+  })();
+  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     dataThrough: rows.length ? rows[rows.length-1].date : null };
