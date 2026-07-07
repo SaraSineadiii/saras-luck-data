@@ -3,6 +3,7 @@
    Lotto America: seeded history + new draws appended from lottonumbers.com (guarded).
    Output: data.json (CORS-served via raw.githubusercontent.com) with all three methods. */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 const zf = a => { const m=a.reduce((x,y)=>x+y,0)/a.length, sd=Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/a.length)||1; return a.map(v=>(v-m)/sd); };
 function tally(rows,pool){ const c=new Array(pool).fill(0); for(const r of rows) for(const n of r.w) if(n>=1&&n<=pool) c[n-1]++; return c; }
@@ -102,5 +103,43 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
   } else { outcome = { ...outcome, jackpotNow:newAnn }; }
   obj.jackpotOutcome = outcome;
 }
+/* ---- Autonomous prospective learner (runs forever with the cron):
+   each run PRE-REGISTERS one pick per method for the NEXT draw, then SCORES those picks
+   automatically when the result lands. The scorecard accumulates permanently — an honest,
+   tamper-proof out-of-sample ledger. If any method ever truly beat chance, it shows up here. */
+let sc={}; try{ sc=JSON.parse(fs.readFileSync('./scorecard.json','utf8')); }catch(e){}
+sc.games=sc.games||{};
+for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10]]){
+  const gs=sc.games[g]=sc.games[g]||{pending:null,totals:{},scored:0,lastScored:null,recent:[]};
+  const hrow=obj.history[obj.history.length-1];
+  const last={date:obj.dataThrough, w:hrow.slice(0,5), s:hrow[5]};
+  // score pending picks once a NEWER draw has arrived (cron runs 2x/day; draws are 3x/week, so at most one new draw between runs)
+  if(gs.pending && last.date>gs.pending.for){
+    const act=new Set(last.w), rec={date:last.date,res:{}};
+    for(const [m,t] of Object.entries(gs.pending.picks)){
+      let wm=0; for(const n of t.white) if(act.has(n)) wm++;
+      const sp=(t.special===last.s);
+      rec.res[m]=wm+(sp?'+S':'');
+      const tot=gs.totals[m]=gs.totals[m]||{draws:0,whiteSum:0,sp:0,best:0,jackpots:0};
+      tot.draws++; tot.whiteSum+=wm; if(sp)tot.sp++; if(wm>tot.best)tot.best=wm; if(wm===5&&sp)tot.jackpots++;
+    }
+    gs.recent.push(rec); if(gs.recent.length>60)gs.recent=gs.recent.slice(-60);
+    gs.scored++; gs.lastScored=last.date; gs.pending=null;
+    console.log(g,'learner scored draw',last.date,JSON.stringify(rec.res));
+  }
+  // register fresh picks for the next draw
+  if(!gs.pending){
+    const wf=obj.whiteFreq, sf=obj.specialFreq;
+    const anti={ white:wf.map((v,i)=>({n:i+1,c:v})).filter(x=>x.n>31).sort((a,b)=>b.c-a.c||a.n-b.n).slice(0,5).map(x=>x.n).sort((a,b)=>a-b),
+                 special:sf.map((v,i)=>[i+1,v]).sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0][0] };
+    const mimic=(()=>{ const s=new Set(); while(s.size<5)s.add(1+crypto.randomInt(pool)); return {white:[...s].sort((a,b)=>a-b),special:1+crypto.randomInt(spool)}; })();
+    gs.pending={ for:last.date, registered:new Date().toISOString(),
+      picks:{ edge:obj.ticketEdge, hot:obj.ticketData, leastShared:anti, randomMimic:mimic } };
+    console.log(g,'learner registered picks for the draw after',last.date);
+  }
+  obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals,
+    pendingFor:gs.pending.for, pendingSince:gs.pending.registered, picks:gs.pending.picks, recent:gs.recent.slice(-8) };
+}
+fs.writeFileSync('./scorecard.json', JSON.stringify(sc));
 fs.writeFileSync('./data.json', JSON.stringify({ updated:new Date().toISOString(), powerball:pb, lottoAmerica:la }));
 console.log('data.json OK — PB', pb.draws, 'edge', pb.ticketEdge.white.join(''), 'cash', pb.cashLumpSum, '| LA', la.draws, 'edge', la.ticketEdge.white.join(''), 'cash', la.cashLumpSum);
