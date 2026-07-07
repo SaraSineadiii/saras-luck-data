@@ -21,7 +21,35 @@ function methods(rows,pool,spool){
       zA.map((v,i)=>[i+1,v+wr*zR[i]+wp*((c1[i]>a1&&c2[i]>a2)?1:0)]).sort((a,b)=>b[1]-a[1]).slice(0,5).forEach(t=>app[t[0]-1]++); }
   const md=wf.map((v,i)=>({n:i+1,c:v,r:r77[i]})).sort((a,b)=>b.c-a.c||b.r-a.r||a.n-b.n).slice(0,5).map(x=>x.n).sort((a,b)=>a-b);
   const ew=app.map((v,i)=>({n:i+1,p:v})).sort((a,b)=>b.p-a.p||wf[b.n-1]-wf[a.n-1]).slice(0,5).map(x=>x.n).sort((a,b)=>a-b);
-  return { draws:rows.length, whiteFreq:wf, specialFreq:sf,
+  /* FUSION #1 line: stacked consensus of frequency + recency + transition (the weights a walk-forward
+     meta-learner converged to), then pick the never-drawn, lowest-split-risk 5-set among the top candidates.
+     Same draw odds as any line — this maximizes expected VALUE (robust consensus + don't split), honestly. */
+  const rec=new Array(pool).fill(0); { const L=Math.exp(-0.02); let wgt=1; const tmp=new Array(pool).fill(0);
+    for(let i=rows.length-1;i>=0;i--){ for(const n of rows[i].w) if(n>=1&&n<=pool) tmp[n-1]+=wgt; wgt*=L; }
+    for(let i=0;i<pool;i++) rec[i]=tmp[i]; }
+  const trans=new Array(pool).fill(0); { const T=Array.from({length:pool+1},()=>new Array(pool+1).fill(0)); let p=null;
+    for(const r of rows){ if(p) for(const m of p) for(const n of r.w) if(m>=1&&m<=pool&&n>=1&&n<=pool) T[m][n]++; p=r.w; }
+    if(p) for(const m of p) for(let n=1;n<=pool;n++) trans[n-1]+=T[m][n]; }
+  const zc=zf(wf), zr=zf(rec), zt=zf(trans);
+  const fscore=zc.map((v,i)=>0.4*v+0.4*zr[i]+0.2*zt[i]);
+  const cand=fscore.map((v,i)=>({n:i+1,s:v})).sort((a,b)=>b.s-a.s||a.n-b.n).slice(0,15);
+  const drawnSet=new Set(rows.map(r=>r.w.slice().sort((a,b)=>a-b).join('-')));
+  let bestSet=null,bestScore=-1e9;
+  const choose=(start,picked)=>{
+    if(picked.length===5){
+      const set=picked.map(c=>c.n).sort((a,b)=>a-b);
+      if(drawnSet.has(set.join('-'))) return;               // never a previously-drawn combo
+      const consensus=picked.reduce((s,c)=>s+c.s,0);
+      const antiShare=set.filter(n=>n>31).length*0.8;       // avoid the birthday-crowd numbers -> don't split
+      const sc=consensus+antiShare;
+      if(sc>bestScore){bestScore=sc;bestSet=set;}
+      return;
+    }
+    for(let i=start;i<cand.length;i++){picked.push(cand[i]);choose(i+1,picked);picked.pop();}
+  };
+  choose(0,[]);
+  const fusion={ white: bestSet||ew, special: top(sf,1)[0] };
+  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     dataThrough: rows.length ? rows[rows.length-1].date : null };
@@ -153,9 +181,11 @@ for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10
                  special:sf.map((v,i)=>[i+1,v]).sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0][0] };
     const mimic=(()=>{ const s=new Set(); while(s.size<5)s.add(1+crypto.randomInt(pool)); return {white:[...s].sort((a,b)=>a-b),special:1+crypto.randomInt(spool)}; })();
     gs.pending={ for:last.date, registered:new Date().toISOString(),
-      picks:{ edge:obj.ticketEdge, hot:obj.ticketData, leastShared:anti, randomMimic:mimic } };
+      picks:{ fusion:obj.ticketFusion, edge:obj.ticketEdge, hot:obj.ticketData, leastShared:anti, randomMimic:mimic } };
     console.log(g,'learner registered picks for the draw after',last.date);
   }
+  // fusion added later than the other methods — join an already-pending registration (still before its target draw)
+  if(gs.pending && !gs.pending.picks.fusion && obj.ticketFusion) gs.pending.picks.fusion=obj.ticketFusion;
   obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals,
     pendingFor:gs.pending.for, pendingSince:gs.pending.registered, picks:gs.pending.picks, recent:gs.recent.slice(-8) };
 }
