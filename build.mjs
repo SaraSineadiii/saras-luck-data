@@ -11,7 +11,7 @@ function tally(rows,pool){ const c=new Array(pool).fill(0); for(const r of rows)
 function methods(rows,pool,spool){
   const wf=new Array(pool).fill(0), sf=new Array(spool).fill(0);
   for(const r of rows){ r.w.forEach(n=>{if(n>=1&&n<=pool)wf[n-1]++;}); if(r.s>=1&&r.s<=spool)sf[r.s-1]++; }
-  const top=(a,k)=>a.map((v,i)=>[i+1,v]).sort((p,q)=>q[1]-p[1]).slice(0,k).map(x=>x[0]);
+  const top=(a,k)=>a.map((v,i)=>[i+1,v]).sort((p,q)=>q[1]-p[1]||p[0]-q[0]).slice(0,k).map(x=>x[0]);
   const cntW=win=>{ const c=new Array(pool).fill(0); rows.slice(-win).forEach(r=>r.w.forEach(n=>{if(n>=1&&n<=pool)c[n-1]++;})); return c; };
   const r77=cntW(77), half=Math.floor(rows.length/2);
   const c1=tally(rows.slice(0,half),pool), c2=tally(rows.slice(half),pool);
@@ -54,9 +54,20 @@ function methods(rows,pool,spool){
   const specialBias=(()=>{ const D=rows.length, E=D/spool; let hot=1; for(let i=0;i<spool;i++) if(sf[i]>sf[hot-1]) hot=i+1;
     const cnt=sf[hot-1], z=(cnt-E)/Math.sqrt(E*(1-1/spool));
     let chi=0; for(let i=0;i<spool;i++) chi+=(sf[i]-E)**2/E;
+    // CONSERVATIVE, honest corrected p: EXACT one-sided binomial tail P(X>=cnt) then Sidak max-of-spool.
+    const lgamma=x=>{const c=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5];let y=x,t=x+5.5;t-=(x+0.5)*Math.log(t);let s2=1.000000000190015;for(let j=0;j<6;j++)s2+=c[j]/++y;return -t+Math.log(2.5066282746310005*s2/x);};
+    const lchoose=(n,k)=>lgamma(n+1)-lgamma(k+1)-lgamma(n-k+1), pp=1/spool;
+    let tail=0; for(let k=cnt;k<=D;k++) tail+=Math.exp(lchoose(D,k)+k*Math.log(pp)+(D-k)*Math.log(1-pp));
+    const pCorr=1-Math.pow(1-tail,spool);
+    // omnibus: is the WHOLE special distribution non-uniform? (Wilson-Hilferty chi-square p) — usually only marginal
+    const dfc=spool-1, wh=Math.pow(chi/dfc,1/3), zChi=(wh-(1-2/(9*dfc)))/Math.sqrt(2/(9*dfc));
     const erf=x=>{const s=x<0?-1:1;x=Math.abs(x);const t=1/(1+0.3275911*x);return s*(1-(((((1.061405429*t-1.453152027)*t+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x)));};
-    const pCell=1-erf(Math.abs(z)/Math.SQRT2), pCorr=1-Math.pow(1-pCell,spool);
-    return { hot, count:cnt, rate:+(cnt/D).toFixed(4), expected:+E.toFixed(1), z:+z.toFixed(2), chi:+chi.toFixed(2), df:spool-1, pCorrected:+pCorr.toFixed(4), draws:D,
+    const chiP=1-0.5*(1+erf(zChi/Math.SQRT2));
+    // is it HOLDING recently? hot-ball rate over the last min(150,D) draws (regression check)
+    const recN=Math.min(150,D); let rc=0; for(let i=D-recN;i<D;i++) if(rows[i] && rows[i].s===hot) rc++;
+    return { hot, count:cnt, rate:+(cnt/D).toFixed(4), expected:+E.toFixed(1), z:+z.toFixed(2),
+      chi:+chi.toFixed(2), df:dfc, chiP:+chiP.toFixed(3), omnibusSignificant: chiP<0.05,
+      pCorrected:+pCorr.toFixed(4), recentRate:+(rc/recN).toFixed(3), recentN:recN, draws:D,
       significant: pCorr<0.05 };
   })();
   return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias,
@@ -164,25 +175,34 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
    each run PRE-REGISTERS one pick per method for the NEXT draw, then SCORES those picks
    automatically when the result lands. The scorecard accumulates permanently — an honest,
    tamper-proof out-of-sample ledger. If any method ever truly beat chance, it shows up here. */
+const nextMWF=iso=>{ let d=new Date(iso+'T12:00:00Z'); for(let i=0;i<8;i++){ d=new Date(d.getTime()+86400000); if([1,3,6].includes(d.getUTCDay())) return d.toISOString().slice(0,10); } return null; };
 let sc={}; try{ sc=JSON.parse(fs.readFileSync('./scorecard.json','utf8')); }catch(e){}
 sc.games=sc.games||{};
 for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10]]){
   const gs=sc.games[g]=sc.games[g]||{pending:null,totals:{},scored:0,lastScored:null,recent:[]};
   const hrow=obj.history[obj.history.length-1];
   const last={date:obj.dataThrough, w:hrow.slice(0,5), s:hrow[5]};
-  // score pending picks once a NEWER draw has arrived (cron runs 2x/day; draws are 3x/week, so at most one new draw between runs)
+  // score pending picks ONLY against the true immediate-next draw after pending.for.
+  // If a full inter-draw interval was missed (a run failed), the newest draw is NOT the immediate
+  // successor — skip scoring that cycle to avoid mis-attributing picks to the wrong draw.
   if(gs.pending && last.date>gs.pending.for){
-    const act=new Set(last.w), rec={date:last.date,target:gs.pending.for,res:{}}; // target = picks were for the first draw after this date
-    for(const [m,t] of Object.entries(gs.pending.picks)){
-      let wm=0; for(const n of t.white) if(act.has(n)) wm++;
-      const sp=(t.special===last.s);
-      rec.res[m]=wm+(sp?'+S':'');
-      const tot=gs.totals[m]=gs.totals[m]||{draws:0,whiteSum:0,sp:0,best:0,jackpots:0};
-      tot.draws++; tot.whiteSum+=wm; if(sp)tot.sp++; if(wm>tot.best)tot.best=wm; if(wm===5&&sp)tot.jackpots++;
+    const expected=nextMWF(gs.pending.for);
+    if(last.date===expected){
+      const act=new Set(last.w), rec={date:last.date,target:gs.pending.for,res:{}};
+      for(const [m,t] of Object.entries(gs.pending.picks)){
+        let wm=0; for(const n of t.white) if(act.has(n)) wm++;
+        const sp=(t.special===last.s);
+        rec.res[m]=wm+(sp?'+S':'');
+        const tot=gs.totals[m]=gs.totals[m]||{draws:0,whiteSum:0,sp:0,best:0,jackpots:0};
+        tot.draws++; tot.whiteSum+=wm; if(sp)tot.sp++; if(wm>tot.best)tot.best=wm; if(wm===5&&sp)tot.jackpots++;
+      }
+      gs.recent.push(rec); if(gs.recent.length>60)gs.recent=gs.recent.slice(-60);
+      gs.scored++; gs.lastScored=last.date;
+      console.log(g,'learner scored draw',last.date,JSON.stringify(rec.res));
+    } else {
+      console.log(g,'learner: newest draw',last.date,'is not the immediate successor of',gs.pending.for,'(expected '+expected+') — a run was missed; not scoring to avoid mis-attribution');
     }
-    gs.recent.push(rec); if(gs.recent.length>60)gs.recent=gs.recent.slice(-60);
-    gs.scored++; gs.lastScored=last.date; gs.pending=null;
-    console.log(g,'learner scored draw',last.date,JSON.stringify(rec.res));
+    gs.pending=null;
   }
   // register fresh picks for the next draw
   if(!gs.pending){
