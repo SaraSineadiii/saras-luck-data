@@ -3,6 +3,7 @@ name: Update lottery data
 on:
   schedule:
     - cron: '20 5 * * *'    # ~00:20 US Eastern, after Mon/Wed/Sat draws
+    - cron: '40 8 * * *'    # redundancy — GitHub sometimes drops/delays scheduled runs
     - cron: '20 13 * * *'   # midday safety refresh
   workflow_dispatch: {}
 
