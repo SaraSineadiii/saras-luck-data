@@ -134,7 +134,7 @@ async function lottoAmerica(){
 // Jackpots: cash value (drives the take-home) from lotteryusa; annuity estimated from it.
 async function jackpots(){
   const out={};
-  for(const [game,url,minCash,ratio] of [['powerball','https://www.lotteryusa.com/powerball/',20e6,0.47],['lottoAmerica','https://www.lotteryusa.com/lotto-america/',2e6,0.46]]){
+  for(const [game,url,minCash,ratio] of [['powerball','https://www.lotteryusa.com/powerball/',20e6,0.45],['lottoAmerica','https://www.lotteryusa.com/lotto-america/',2e6,0.46]]){
     try{
       const h = await (await fetch(url,{headers:{'User-Agent':'Mozilla/5.0'}, signal:AbortSignal.timeout(30000)})).text();
       const m = h.match(/Cash value:?\s*\$?\s*([0-9][0-9.,]*)\s*(Million|Billion)/i);
@@ -164,7 +164,7 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
   if(prevAnn && newAnn && Math.abs(newAnn-prevAnn) > thr){
     outcome = newAnn < prevAnn ? { status:'won', prize:prevAnn, jackpotNow:newAnn, on:obj.dataThrough }
                                : { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
-  } else { outcome = { ...outcome, jackpotNow:newAnn }; }
+  } else { outcome = { ...outcome, jackpotNow:newAnn, on:obj.dataThrough }; }
   // a 'won' banner only describes the draw it happened on — expire it once a newer draw has occurred
   if(outcome.status==='won' && outcome.on && obj.dataThrough > outcome.on){
     outcome = { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
