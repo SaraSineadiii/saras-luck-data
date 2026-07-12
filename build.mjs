@@ -33,6 +33,10 @@ function methods(rows,pool,spool){
   const wmA=meanA(wf), wsA=sdA(wf), pairSorted=Object.values(pairC).sort((a,b)=>a-b), PV=pairSorted.length;
   const pctLE=v=>{let lo=0,hi=PV;while(lo<hi){const m=(lo+hi)>>1;if(pairSorted[m]<=v)lo=m+1;else hi=m;}return 100*lo/PV;};
   const drawnSet=new Set(rows.map(r=>r.w.slice().sort((a,b)=>a-b).join('-')));
+  // also require the ticket to have NEVER shared 4/5 with any past draw: none of its 4-number
+  // subsets may equal a 4-subset of any historical draw (guarantees max 3/5 overlap with all history).
+  const fourSet=new Set(); for(const r of rows){const so=r.w.slice().sort((a,b)=>a-b); for(let x=0;x<5;x++) fourSet.add(so.filter((_,i)=>i!==x).join('-')); }
+  const noNear=so=>{ for(let x=0;x<5;x++) if(fourSet.has(so.filter((_,i)=>i!==x).join('-'))) return false; return true; };
   const pim=w=>{const so=w.slice().sort((a,b)=>a-b),sum=so[0]+so[1]+so[2]+so[3]+so[4];
     const zd=(v,p)=>Math.abs((v-p[0])/p[1]);
     const shape=(zd(sum,Pr.sum)+zd(so.filter(n=>n%2).length,Pr.odd)+zd(so.filter(n=>n<=halfPool).length,Pr.low)+zd(so[4]-so[0],Pr.spread))/4;
@@ -41,9 +45,11 @@ function methods(rows,pool,spool){
     return 0.40*typ+0.35*Math.min(100,Math.max(0,50+15*hotZ))+0.25*pctLE(pa); };
   const hot36=wf.map((v,i)=>[i+1,v]).sort((a,b)=>b[1]-a[1]).slice(0,36).map(x=>x[0]);
   let bestW=null,bestP=-1;
-  const choose=(start,picked)=>{ if(picked.length===5){const key=picked.slice().sort((a,b)=>a-b).join('-');if(drawnSet.has(key))return;const p=pim(picked);if(p>bestP){bestP=p;bestW=picked.slice();}return;} for(let i=start;i<hot36.length;i++){picked.push(hot36[i]);choose(i+1,picked);picked.pop();} };
+  const choose=(start,picked)=>{ if(picked.length===5){const so=picked.slice().sort((a,b)=>a-b);if(drawnSet.has(so.join('-'))||!noNear(so))return;const p=pim(picked);if(p>bestP){bestP=p;bestW=picked.slice();}return;} for(let i=start;i<hot36.length;i++){picked.push(hot36[i]);choose(i+1,picked);picked.pop();} };
   choose(0,[]);
-  if(bestW){ let imp=true; while(imp){imp=false; for(let i=0;i<5;i++)for(let cand=1;cand<=pool;cand++){ if(bestW.includes(cand))continue; const w2=bestW.slice();w2[i]=cand; if(new Set(w2).size<5)continue; if(drawnSet.has(w2.slice().sort((a,b)=>a-b).join('-')))continue; const p=pim(w2); if(p>bestP){bestP=p;bestW=w2;imp=true;} } } }
+  if(bestW){ let imp=true; while(imp){imp=false; for(let i=0;i<5;i++)for(let cand=1;cand<=pool;cand++){ if(bestW.includes(cand))continue; const w2=bestW.slice();w2[i]=cand; if(new Set(w2).size<5)continue; const so2=w2.slice().sort((a,b)=>a-b); if(drawnSet.has(so2.join('-'))||!noNear(so2))continue; const p=pim(w2); if(p>bestP){bestP=p;bestW=w2;imp=true;} } } }
+  // fallback: if the 4/5-free constraint somehow eliminates everything in the box, drop it (never happens in practice)
+  if(!bestW){ const choose2=(start,picked)=>{ if(picked.length===5){const so=picked.slice().sort((a,b)=>a-b);if(drawnSet.has(so.join('-')))return;const p=pim(picked);if(p>bestP){bestP=p;bestW=picked.slice();}return;} for(let i=start;i<hot36.length;i++){picked.push(hot36[i]);choose2(i+1,picked);picked.pop();} }; choose2(0,[]); }
   const fusion={ white:(bestW||ew).slice().sort((a,b)=>a-b), special: top(sf,1)[0], pim:+bestP.toFixed(1) };
   // The one real lead: is any special ball significantly over-represented? Multiple-comparison corrected,
   // so it self-confirms or regresses as future draws land. (LA star-4 flagged at corrected p~0.003.)
