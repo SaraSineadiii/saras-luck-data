@@ -21,34 +21,30 @@ function methods(rows,pool,spool){
       zA.map((v,i)=>[i+1,v+wr*zR[i]+wp*((c1[i]>a1&&c2[i]>a2)?1:0)]).sort((a,b)=>b[1]-a[1]).slice(0,5).forEach(t=>app[t[0]-1]++); }
   const md=wf.map((v,i)=>({n:i+1,c:v,r:r77[i]})).sort((a,b)=>b.c-a.c||b.r-a.r||a.n-b.n).slice(0,5).map(x=>x.n).sort((a,b)=>a-b);
   const ew=app.map((v,i)=>({n:i+1,p:v})).sort((a,b)=>b.p-a.p||wf[b.n-1]-wf[a.n-1]).slice(0,5).map(x=>x.n).sort((a,b)=>a-b);
-  /* FUSION #1 line: stacked consensus of frequency + recency + transition (the weights a walk-forward
-     meta-learner converged to), then pick the never-drawn, lowest-split-risk 5-set among the top candidates.
-     Same draw odds as any line — this maximizes expected VALUE (robust consensus + don't split), honestly. */
-  const rec=new Array(pool).fill(0); { const L=Math.exp(-0.02); let wgt=1; const tmp=new Array(pool).fill(0);
-    for(let i=rows.length-1;i>=0;i--){ for(const n of rows[i].w) if(n>=1&&n<=pool) tmp[n-1]+=wgt; wgt*=L; }
-    for(let i=0;i<pool;i++) rec[i]=tmp[i]; }
-  const trans=new Array(pool).fill(0); { const T=Array.from({length:pool+1},()=>new Array(pool+1).fill(0)); let p=null;
-    for(const r of rows){ if(p) for(const m of p) for(const n of r.w) if(m>=1&&m<=pool&&n>=1&&n<=pool) T[m][n]++; p=r.w; }
-    if(p) for(const m of p) for(let n=1;n<=pool;n++) trans[n-1]+=T[m][n]; }
-  const zc=zf(wf), zr=zf(rec), zt=zf(trans);
-  const fscore=zc.map((v,i)=>0.4*v+0.4*zr[i]+0.2*zt[i]);
-  const cand=fscore.map((v,i)=>({n:i+1,s:v})).sort((a,b)=>b.s-a.s||a.n-b.n).slice(0,15);
+  /* THE best ticket: the highest historical-SIMILARITY (PIM) ticket that has NEVER been drawn.
+     PIM = 0.40 typicality (shape closest to the winner profile) + 0.35 hotness (avg frequency z)
+     + 0.25 pair-support percentile. Pure "most like the past winners, never drawn" — NO split/anti-share. */
+  const halfPool=Math.floor(pool/2);
+  const meanA=a=>a.reduce((x,y)=>x+y,0)/a.length, sdA=a=>{const m=meanA(a);return Math.sqrt(meanA(a.map(x=>(x-m)**2)))||1;};
+  const sSum=rows.map(r=>r.w.reduce((a,b)=>a+b,0)), sOdd=rows.map(r=>r.w.filter(n=>n%2).length),
+        sLow=rows.map(r=>r.w.filter(n=>n<=halfPool).length), sSpr=rows.map(r=>{const so=r.w.slice().sort((a,b)=>a-b);return so[4]-so[0];});
+  const Pr={sum:[meanA(sSum),sdA(sSum)],odd:[meanA(sOdd),sdA(sOdd)],low:[meanA(sLow),sdA(sLow)],spread:[meanA(sSpr),sdA(sSpr)]};
+  const pairC={}; for(const r of rows){const so=r.w.slice().sort((a,b)=>a-b);for(let i=0;i<5;i++)for(let j=i+1;j<5;j++){const k=so[i]+'-'+so[j];pairC[k]=(pairC[k]||0)+1;}}
+  const wmA=meanA(wf), wsA=sdA(wf), pairSorted=Object.values(pairC).sort((a,b)=>a-b), PV=pairSorted.length;
+  const pctLE=v=>{let lo=0,hi=PV;while(lo<hi){const m=(lo+hi)>>1;if(pairSorted[m]<=v)lo=m+1;else hi=m;}return 100*lo/PV;};
   const drawnSet=new Set(rows.map(r=>r.w.slice().sort((a,b)=>a-b).join('-')));
-  let bestSet=null,bestScore=-1e9;
-  const choose=(start,picked)=>{
-    if(picked.length===5){
-      const set=picked.map(c=>c.n).sort((a,b)=>a-b);
-      if(drawnSet.has(set.join('-'))) return;               // never a previously-drawn combo
-      const consensus=picked.reduce((s,c)=>s+c.s,0);
-      const antiShare=set.filter(n=>n>31).length*0.8;       // avoid the birthday-crowd numbers -> don't split
-      const sc=consensus+antiShare;
-      if(sc>bestScore){bestScore=sc;bestSet=set;}
-      return;
-    }
-    for(let i=start;i<cand.length;i++){picked.push(cand[i]);choose(i+1,picked);picked.pop();}
-  };
+  const pim=w=>{const so=w.slice().sort((a,b)=>a-b),sum=so[0]+so[1]+so[2]+so[3]+so[4];
+    const zd=(v,p)=>Math.abs((v-p[0])/p[1]);
+    const shape=(zd(sum,Pr.sum)+zd(so.filter(n=>n%2).length,Pr.odd)+zd(so.filter(n=>n<=halfPool).length,Pr.low)+zd(so[4]-so[0],Pr.spread))/4;
+    const typ=100*Math.exp(-shape), hotZ=meanA(so.map(n=>(wf[n-1]-wmA)/wsA));
+    let pa=0;for(let i=0;i<5;i++)for(let j=i+1;j<5;j++)pa+=pairC[so[i]+'-'+so[j]]||0; pa/=10;
+    return 0.40*typ+0.35*Math.min(100,Math.max(0,50+15*hotZ))+0.25*pctLE(pa); };
+  const hot36=wf.map((v,i)=>[i+1,v]).sort((a,b)=>b[1]-a[1]).slice(0,36).map(x=>x[0]);
+  let bestW=null,bestP=-1;
+  const choose=(start,picked)=>{ if(picked.length===5){const key=picked.slice().sort((a,b)=>a-b).join('-');if(drawnSet.has(key))return;const p=pim(picked);if(p>bestP){bestP=p;bestW=picked.slice();}return;} for(let i=start;i<hot36.length;i++){picked.push(hot36[i]);choose(i+1,picked);picked.pop();} };
   choose(0,[]);
-  const fusion={ white: bestSet||ew, special: top(sf,1)[0] };
+  if(bestW){ let imp=true; while(imp){imp=false; for(let i=0;i<5;i++)for(let cand=1;cand<=pool;cand++){ if(bestW.includes(cand))continue; const w2=bestW.slice();w2[i]=cand; if(new Set(w2).size<5)continue; if(drawnSet.has(w2.slice().sort((a,b)=>a-b).join('-')))continue; const p=pim(w2); if(p>bestP){bestP=p;bestW=w2;imp=true;} } } }
+  const fusion={ white:(bestW||ew).slice().sort((a,b)=>a-b), special: top(sf,1)[0], pim:+bestP.toFixed(1) };
   // The one real lead: is any special ball significantly over-represented? Multiple-comparison corrected,
   // so it self-confirms or regresses as future draws land. (LA star-4 flagged at corrected p~0.003.)
   const specialBias=(()=>{ const D=rows.length, E=D/spool; let hot=1; for(let i=0;i<spool;i++) if(sf[i]>sf[hot-1]) hot=i+1;
@@ -206,16 +202,13 @@ for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10
   }
   // register fresh picks for the next draw
   if(!gs.pending){
-    const wf=obj.whiteFreq, sf=obj.specialFreq;
-    const anti={ white:wf.map((v,i)=>({n:i+1,c:v})).filter(x=>x.n>31).sort((a,b)=>b.c-a.c||a.n-b.n).slice(0,5).map(x=>x.n).sort((a,b)=>a-b),
-                 special:sf.map((v,i)=>[i+1,v]).sort((a,b)=>b[1]-a[1]||a[0]-b[0])[0][0] };
     const mimic=(()=>{ const s=new Set(); while(s.size<5)s.add(1+crypto.randomInt(pool)); return {white:[...s].sort((a,b)=>a-b),special:1+crypto.randomInt(spool)}; })();
     gs.pending={ for:last.date, registered:new Date().toISOString(),
-      picks:{ fusion:obj.ticketFusion, edge:obj.ticketEdge, hot:obj.ticketData, leastShared:anti, randomMimic:mimic } };
+      picks:{ best:obj.ticketFusion, edge:obj.ticketEdge, hot:obj.ticketData, randomPick:mimic } };
     console.log(g,'learner registered picks for the draw after',last.date);
   }
   // fusion added later than the other methods — join an already-pending registration (still before its target draw)
-  if(gs.pending && !gs.pending.picks.fusion && obj.ticketFusion) gs.pending.picks.fusion=obj.ticketFusion;
+  if(gs.pending && !gs.pending.picks.best && obj.ticketFusion) gs.pending.picks.best=obj.ticketFusion;
   obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals,
     pendingFor:gs.pending.for, pendingSince:gs.pending.registered, picks:gs.pending.picks, recent:gs.recent.slice(-8) };
 }
