@@ -72,7 +72,17 @@ function methods(rows,pool,spool){
       pCorrected:+pCorr.toFixed(4), recentRate:+(rc/recN).toFixed(3), recentN:recN, draws:D,
       significant: pCorr<0.05 };
   })();
-  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias,
+  // ---- every method's ticket, so the autonomous learner can prospectively compare them all ----
+  const sTop=top(sf,1)[0], sBot=sf.map((v,i)=>[i+1,v]).sort((a,b)=>a[1]-b[1]||a[0]-b[0])[0][0];
+  const top5=(a)=>a.map((v,i)=>[i+1,v]).sort((x,y)=>y[1]-x[1]||x[0]-y[0]).slice(0,5).map(z=>z[0]).sort((a,b)=>a-b);
+  const bot5=(a)=>a.map((v,i)=>[i+1,v]).sort((x,y)=>x[1]-y[1]||x[0]-y[0]).slice(0,5).map(z=>z[0]).sort((a,b)=>a-b);
+  const coldW=bot5(wf);
+  const recW=(()=>{const L=Math.exp(-0.02),w=new Array(pool).fill(0);for(let i=rows.length-1;i>=0;i--){for(let j=0;j<pool;j++)w[j]*=L;for(const n of rows[i].w)if(n>=1&&n<=pool)w[n-1]+=1;}return top5(w);})();
+  const momW=(()=>{const R=rows.slice(-25),O=rows.slice(-100,-25),rf=new Array(pool).fill(0),of=new Array(pool).fill(0);R.forEach(d=>d.w.forEach(n=>{if(n>=1&&n<=pool)rf[n-1]++;}));O.forEach(d=>d.w.forEach(n=>{if(n>=1&&n<=pool)of[n-1]++;}));return top5(rf.map((v,i)=>v/Math.max(1,R.length)-of[i]/Math.max(1,O.length)));})();
+  const marW=(()=>{const T=Array.from({length:pool+1},()=>new Array(pool+1).fill(0));let p=null;for(const r of rows){if(p)for(const m of p)for(const n of r.w)if(m>=1&&m<=pool&&n>=1&&n<=pool)T[m][n]++;p=r.w;}const w=new Array(pool).fill(0);if(p)for(const m of p)for(let n=1;n<=pool;n++)w[n-1]+=T[m][n];return top5(w);})();
+  const posW=(()=>{const col=Array.from({length:5},()=>new Array(pool+1).fill(0));rows.forEach(r=>{r.w.slice().sort((a,b)=>a-b).forEach((n,c)=>{if(n>=1&&n<=pool)col[c][n]++;});});const picks=[];for(let c=0;c<5;c++){let b=1,bv=-1;for(let n=1;n<=pool;n++)if(col[c][n]>bv&&!picks.includes(n)){bv=col[c][n];b=n;}picks.push(b);}return picks.sort((a,b)=>a-b);})();
+  const methodTickets={ cold:{white:coldW,special:sBot}, recency:{white:recW,special:sTop}, momentum:{white:momW,special:sTop}, markov:{white:marW,special:sTop}, positional:{white:posW,special:sTop} };
+  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias, methodTickets,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     dataThrough: rows.length ? rows[rows.length-1].date : null };
@@ -210,11 +220,15 @@ for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10
   if(!gs.pending){
     const mimic=(()=>{ const s=new Set(); while(s.size<5)s.add(1+crypto.randomInt(pool)); return {white:[...s].sort((a,b)=>a-b),special:1+crypto.randomInt(spool)}; })();
     gs.pending={ for:last.date, registered:new Date().toISOString(),
-      picks:{ best:obj.ticketFusion, edge:obj.ticketEdge, hot:obj.ticketData, randomPick:mimic } };
+      picks:{ best:obj.ticketFusion, edge:obj.ticketEdge, hot:obj.ticketData,
+        cold:obj.methodTickets.cold, recency:obj.methodTickets.recency, momentum:obj.methodTickets.momentum,
+        markov:obj.methodTickets.markov, positional:obj.methodTickets.positional, randomPick:mimic } };
     console.log(g,'learner registered picks for the draw after',last.date);
   }
   // fusion added later than the other methods — join an already-pending registration (still before its target draw)
   if(gs.pending && !gs.pending.picks.best && obj.ticketFusion) gs.pending.picks.best=obj.ticketFusion;
+  // migrate: newly-added methods join the current pending registration (still before its target draw)
+  if(gs.pending && obj.methodTickets) for(const m of ['cold','recency','momentum','markov','positional']) if(!gs.pending.picks[m]) gs.pending.picks[m]=obj.methodTickets[m];
   obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals,
     pendingFor:gs.pending.for, pendingSince:gs.pending.registered, picks:gs.pending.picks, recent:gs.recent.slice(-8) };
 }
