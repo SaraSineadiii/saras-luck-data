@@ -85,6 +85,7 @@ function methods(rows,pool,spool){
   return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias, methodTickets,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
+    historyDates: rows.map(r=>r.date),
     dataThrough: rows.length ? rows[rows.length-1].date : null };
 }
 
@@ -144,6 +145,8 @@ async function lottoAmerica(){
 }
 
 // Jackpots: cash value (drives the take-home) from lotteryusa; annuity estimated from it.
+// PB publishes a Cash value that scrapes cleanly. LA shows ONLY an annuity and its page is
+// JS-rendered (not present in the server-side HTML), so LA falls back to LA_MANUAL below.
 async function jackpots(){
   const out={};
   for(const [game,url,minCash,ratio] of [['powerball','https://www.lotteryusa.com/powerball/',20e6,0.45],['lottoAmerica','https://www.lotteryusa.com/lotto-america/',2e6,0.46]]){
@@ -156,6 +159,9 @@ async function jackpots(){
   }
   return out;
 }
+// Lotto America current jackpot — MANUAL (its page can't be scraped server-side). Small game, near
+// its $2M floor; update asOf + amounts when you check lottoamerica.com. Cash ~50% of the annuity.
+const LA_MANUAL = { advertisedAnnuity: 2050000, cashLumpSum: 1025000, asOf: '2026-07-22' };
 
 // prev feed loaded FIRST so a total Powerball source failure can fall back to the last good data instead of killing the run
 let prev={}; try{ prev=JSON.parse(fs.readFileSync('./data.json','utf8')); }catch(e){}
@@ -165,7 +171,9 @@ const [pb,la,jp] = await Promise.all([
 ]);
 for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
   const prevAnn = prev[g] && prev[g].advertisedAnnuity;
+  let corrected=false;
   if(jp[g]){ obj.advertisedAnnuity=jp[g].advertisedAnnuity; obj.cashLumpSum=jp[g].cashLumpSum; }
+  else if(g==='lottoAmerica'){ obj.advertisedAnnuity=LA_MANUAL.advertisedAnnuity; obj.cashLumpSum=LA_MANUAL.cashLumpSum; corrected=true; console.log('LA jackpot scrape empty — using dated manual value',LA_MANUAL.asOf,'($'+LA_MANUAL.advertisedAnnuity+' annuity)'); }
   else if(prev[g]&&prev[g].cashLumpSum){ obj.advertisedAnnuity=prev[g].advertisedAnnuity; obj.cashLumpSum=prev[g].cashLumpSum; console.log(g,'jackpot scrape empty — carried forward last-known cash',prev[g].cashLumpSum); }
   // Jackpot outcome of the most recent draw, inferred from the jackpot trajectory (autonomous, no fragile winner-scrape):
   // a big DROP means the jackpot was hit and reset (someone won); growth means it rolled over (no jackpot winner).
@@ -181,6 +189,8 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
   if(outcome.status==='won' && outcome.on && obj.dataThrough > outcome.on){
     outcome = { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
   }
+  // a manual jackpot correction is NOT a real trajectory event — never infer a win/roll from it
+  if(corrected){ outcome = { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough }; }
   obj.jackpotOutcome = outcome;
 }
 /* ---- Autonomous prospective learner (runs forever with the cron):
