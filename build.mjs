@@ -188,25 +188,47 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
    automatically when the result lands. The scorecard accumulates permanently — an honest,
    tamper-proof out-of-sample ledger. If any method ever truly beat chance, it shows up here. */
 const nextMWF=iso=>{ let d=new Date(iso+'T12:00:00Z'); for(let i=0;i<8;i++){ d=new Date(d.getTime()+86400000); if([1,3,6].includes(d.getUTCDay())) return d.toISOString().slice(0,10); } return null; };
+/* Official base prize tables, keyed 'whites+special(0/1)'. 'jackpot' is tracked separately (variable value).
+   These match the game configs the apps use for EV, so the learner scores REAL dollars, not just overlap. */
+const PRIZES={
+  powerball:   { price:2, tab:{'5+1':'jackpot','5+0':1000000,'4+1':50000,'4+0':100,'3+1':100,'3+0':7,'2+1':7,'1+1':4,'0+1':4} },
+  lottoAmerica:{ price:1, tab:{'5+1':'jackpot','5+0':20000,  '4+1':1000, '4+0':100,'3+1':20, '3+0':5,'2+1':5,'1+1':2,'0+1':2} }
+};
+const prizeOf=(g,wm,sp)=> PRIZES[g].tab[wm+'+'+(sp?1:0)] || 0; // 'jackpot' | number | 0
 let sc={}; try{ sc=JSON.parse(fs.readFileSync('./scorecard.json','utf8')); }catch(e){}
 sc.games=sc.games||{};
 for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10]]){
   const gs=sc.games[g]=sc.games[g]||{pending:null,totals:{},scored:0,lastScored:null,recent:[]};
   const hrow=obj.history[obj.history.length-1];
   const last={date:obj.dataThrough, w:hrow.slice(0,5), s:hrow[5]};
+  // one-time backfill: seed the real-dollar ledger from the recorded match history for any method
+  // that predates dollar-tracking (guarded on wonDraws===undefined so it runs once, never double-counts).
+  for(const [m,tot] of Object.entries(gs.totals)){
+    if(tot.wonDraws===undefined){
+      tot.won=0; tot.wonDraws=0; tot.tiers=tot.tiers||{};
+      for(const rec of gs.recent){ const r=rec.res&&rec.res[m]; if(r===undefined) continue;
+        const wm=parseInt(r,10)||0, sp=/\+S/.test(r), pr=prizeOf(g,wm,sp);
+        tot.wonDraws++; if(pr!=='jackpot') tot.won+=pr; if(pr) tot.tiers[wm+'+'+(sp?1:0)]=(tot.tiers[wm+'+'+(sp?1:0)]||0)+1;
+        if(!rec.won){ rec.won={}; } if(rec.won[m]===undefined) rec.won[m]=pr; }
+    }
+  }
   // score pending picks ONLY against the true immediate-next draw after pending.for.
   // If a full inter-draw interval was missed (a run failed), the newest draw is NOT the immediate
   // successor — skip scoring that cycle to avoid mis-attributing picks to the wrong draw.
   if(gs.pending && last.date>gs.pending.for){
     const expected=nextMWF(gs.pending.for);
     if(last.date===expected){
-      const act=new Set(last.w), rec={date:last.date,target:gs.pending.for,res:{}};
+      const act=new Set(last.w), rec={date:last.date,target:gs.pending.for,res:{},won:{}};
       for(const [m,t] of Object.entries(gs.pending.picks)){
         let wm=0; for(const n of t.white) if(act.has(n)) wm++;
         const sp=(t.special===last.s);
-        rec.res[m]=wm+(sp?'+S':'');
-        const tot=gs.totals[m]=gs.totals[m]||{draws:0,whiteSum:0,sp:0,best:0,jackpots:0};
+        const pr=prizeOf(g,wm,sp), dollars=(pr==='jackpot')?0:pr; // jackpot value is variable → counted separately
+        rec.res[m]=wm+(sp?'+S':''); rec.won[m]=pr;
+        const tot=gs.totals[m]=gs.totals[m]||{draws:0,whiteSum:0,sp:0,best:0,jackpots:0,won:0,wonDraws:0,tiers:{}};
         tot.draws++; tot.whiteSum+=wm; if(sp)tot.sp++; if(wm>tot.best)tot.best=wm; if(wm===5&&sp)tot.jackpots++;
+        // real-dollar ROI ledger: prizes won vs $ spent, over the draws we've dollar-tracked
+        tot.won=(tot.won||0)+dollars; tot.wonDraws=(tot.wonDraws||0)+1; tot.tiers=tot.tiers||{};
+        if(pr) tot.tiers[wm+'+'+(sp?1:0)]=(tot.tiers[wm+'+'+(sp?1:0)]||0)+1;
       }
       gs.recent.push(rec); if(gs.recent.length>60)gs.recent=gs.recent.slice(-60);
       gs.scored++; gs.lastScored=last.date;
@@ -229,7 +251,7 @@ for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10
   if(gs.pending && !gs.pending.picks.best && obj.ticketFusion) gs.pending.picks.best=obj.ticketFusion;
   // migrate: newly-added methods join the current pending registration (still before its target draw)
   if(gs.pending && obj.methodTickets) for(const m of ['cold','recency','momentum','markov','positional']) if(!gs.pending.picks[m]) gs.pending.picks[m]=obj.methodTickets[m];
-  obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals,
+  obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals, price:PRIZES[g].price,
     pendingFor:gs.pending.for, pendingSince:gs.pending.registered, picks:gs.pending.picks, recent:gs.recent.slice(-8) };
 }
 fs.writeFileSync('./scorecard.json', JSON.stringify(sc));
