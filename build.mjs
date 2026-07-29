@@ -184,10 +184,14 @@ for(const [g,obj] of [['powerball',pb],['lottoAmerica',la]]){
   if(prevAnn && newAnn && Math.abs(newAnn-prevAnn) > thr){
     outcome = newAnn < prevAnn ? { status:'won', prize:prevAnn, jackpotNow:newAnn, on:obj.dataThrough }
                                : { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
-  } else { outcome = { ...outcome, jackpotNow:newAnn, on:obj.dataThrough }; }
-  // a 'won' banner only describes the draw it happened on — expire it once a newer draw has occurred
-  if(outcome.status==='won' && outcome.on && obj.dataThrough > outcome.on){
-    outcome = { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
+  } else {
+    // no significant jackpot move. A 'won' banner only describes the draw it happened on, so keep it
+    // ONLY while dataThrough is still that draw — decided against the ORIGINAL win date BEFORE we touch
+    // `on` (the old post-check compared dataThrough to an already-overwritten `on`, so it never fired
+    // and a stale 'won' could stick across every later draw whenever the annuity didn't move).
+    const stillOnWinDraw = outcome.status==='won' && outcome.on && obj.dataThrough <= outcome.on;
+    outcome = stillOnWinDraw ? { ...outcome, jackpotNow:newAnn }
+                             : { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough };
   }
   // a manual jackpot correction is NOT a real trajectory event — never infer a win/roll from it
   if(corrected){ outcome = { status:'rolled', jackpotNow:newAnn, on:obj.dataThrough }; }
