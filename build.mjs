@@ -85,8 +85,9 @@ function methods(rows,pool,spool){
   // ---- the "most winner-like SHAPE" that has never been drawn: the never-drawn 5-set whose GRID geometry
   // (center of mass + spread on the app's near-square playslip grid) is the most statistically typical of past
   // winners. DESCRIPTIVE only — grid geometry has zero predictive power (see the Playslip lab); same odds. ----
-  const GW = pool===69?9:8, GR=Math.ceil(pool/GW), lastN=pool-(GR-1)*GW, lastOff=(GW-lastN)/2;
-  const gpos = n=>{const c=(n-1)%GW, r=Math.floor((n-1)/GW); return [ r===GR-1 ? c+lastOff : c, r ];};
+  // whites plotted on a CIRCLE (ring) — the most natural, symmetric layout for a uniform draw:
+  // a ring has no corners/edges, so no positional artifacts. Number i sits at angle 2*pi*(i-1)/pool.
+  const gpos = n=>{const a=2*Math.PI*(n-1)/pool; return [Math.cos(a), Math.sin(a)];};
   const geo = w=>{const p=w.map(gpos); let cx=0,cy=0; for(const q of p){cx+=q[0];cy+=q[1];} cx/=5;cy/=5; let sp=0; for(const q of p){sp+=Math.hypot(q[0]-cx,q[1]-cy);} return {cx,cy,sp:sp/5};};
   const GEO = rows.map(r=>geo(r.w));
   const Gm={cx:meanA(GEO.map(g=>g.cx)),cy:meanA(GEO.map(g=>g.cy)),sp:meanA(GEO.map(g=>g.sp))};
@@ -101,7 +102,7 @@ function methods(rows,pool,spool){
   let shp={w:null,d:1e9};
   for(const s of seeds){ if(!s)continue; const r=climb(s); if(r.w && r.d<shp.d) shp=r; }
   const shape = shp.w ? { white:shp.w.slice().sort((a,b)=>a-b), special:top(sf,1)[0], fit:+shp.d.toFixed(2) } : null;
-  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, ticketShape:shape, gridW:GW, specialBias, methodTickets,
+  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, ticketShape:shape, shapeLayout:'ring', specialBias, methodTickets,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     historyDates: rows.map(r=>r.date),
