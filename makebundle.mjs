@@ -9,7 +9,7 @@ const feed = JSON.parse(fs.readFileSync(feedPath, 'utf8'));
 const win = {}; eval(fs.readFileSync(basePath, 'utf8').replace('window.LOTTO_DATA', 'win.LOTTO_DATA'));
 const B = win.LOTTO_DATA;
 B.asOf = asOf;
-const DYN = ['draws','whiteFreq','ticketFusion','ticketEdge','ticketData','specialBias','learner','cashLumpSum','advertisedAnnuity','jackpotOutcome','dataThrough','historyDates'];
+const DYN = ['draws','whiteFreq','ticketFusion','ticketShape','gridW','ticketEdge','ticketData','specialBias','learner','cashLumpSum','advertisedAnnuity','jackpotOutcome','dataThrough','historyDates'];
 for (const [g, specialKey] of [['powerball','powerFreq'], ['lottoAmerica','starFreq']]) {
   const s = feed[g], d = B[g];
   for (const k of DYN) if (k in s) d[k] = s[k];

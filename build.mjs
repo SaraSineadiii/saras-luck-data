@@ -82,7 +82,26 @@ function methods(rows,pool,spool){
   const marW=(()=>{const T=Array.from({length:pool+1},()=>new Array(pool+1).fill(0));let p=null;for(const r of rows){if(p)for(const m of p)for(const n of r.w)if(m>=1&&m<=pool&&n>=1&&n<=pool)T[m][n]++;p=r.w;}const w=new Array(pool).fill(0);if(p)for(const m of p)for(let n=1;n<=pool;n++)w[n-1]+=T[m][n];return top5(w);})();
   const posW=(()=>{const col=Array.from({length:5},()=>new Array(pool+1).fill(0));rows.forEach(r=>{r.w.slice().sort((a,b)=>a-b).forEach((n,c)=>{if(n>=1&&n<=pool)col[c][n]++;});});const picks=[];for(let c=0;c<5;c++){let b=1,bv=-1;for(let n=1;n<=pool;n++)if(col[c][n]>bv&&!picks.includes(n)){bv=col[c][n];b=n;}picks.push(b);}return picks.sort((a,b)=>a-b);})();
   const methodTickets={ cold:{white:coldW,special:sBot}, recency:{white:recW,special:sTop}, momentum:{white:momW,special:sTop}, markov:{white:marW,special:sTop}, positional:{white:posW,special:sTop} };
-  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, specialBias, methodTickets,
+  // ---- the "most winner-like SHAPE" that has never been drawn: the never-drawn 5-set whose GRID geometry
+  // (center of mass + spread on the app's near-square playslip grid) is the most statistically typical of past
+  // winners. DESCRIPTIVE only — grid geometry has zero predictive power (see the Playslip lab); same odds. ----
+  const GW = pool===69?9:8, GR=Math.ceil(pool/GW), lastN=pool-(GR-1)*GW, lastOff=(GW-lastN)/2;
+  const gpos = n=>{const c=(n-1)%GW, r=Math.floor((n-1)/GW); return [ r===GR-1 ? c+lastOff : c, r ];};
+  const geo = w=>{const p=w.map(gpos); let cx=0,cy=0; for(const q of p){cx+=q[0];cy+=q[1];} cx/=5;cy/=5; let sp=0; for(const q of p){sp+=Math.hypot(q[0]-cx,q[1]-cy);} return {cx,cy,sp:sp/5};};
+  const GEO = rows.map(r=>geo(r.w));
+  const Gm={cx:meanA(GEO.map(g=>g.cx)),cy:meanA(GEO.map(g=>g.cy)),sp:meanA(GEO.map(g=>g.sp))};
+  const Gs={cx:sdA(GEO.map(g=>g.cx))||1,cy:sdA(GEO.map(g=>g.cy))||1,sp:sdA(GEO.map(g=>g.sp))||1};
+  const gdist = w=>{const g=geo(w); return Math.abs((g.cx-Gm.cx)/Gs.cx)+Math.abs((g.cy-Gm.cy)/Gs.cy)+Math.abs((g.sp-Gm.sp)/Gs.sp);};
+  const okSet = so=>!drawnSet.has(so.join('-')) && noNear(so);
+  const climb = init=>{ let cur=init.slice().sort((a,b)=>a-b), best=okSet(cur)?gdist(cur):1e9, imp=true;
+    while(imp){imp=false; for(let i=0;i<5;i++)for(let cand=1;cand<=pool;cand++){ if(cur.includes(cand))continue; const w2=cur.slice();w2[i]=cand; const so=w2.slice().sort((a,b)=>a-b); if(new Set(so).size<5||!okSet(so))continue; const dd=gdist(so); if(dd<best){best=dd;cur=so;imp=true;} }} return {w:cur,d:best};};
+  const seeds=[ (bestW||ew), md, ew,
+    [Math.round(pool*0.14),Math.round(pool*0.34),Math.round(pool*0.5),Math.round(pool*0.66),Math.round(pool*0.86)],
+    [Math.round(pool*0.2),Math.round(pool*0.4),Math.round(pool*0.55),Math.round(pool*0.7),Math.round(pool*0.85)] ];
+  let shp={w:null,d:1e9};
+  for(const s of seeds){ if(!s)continue; const r=climb(s); if(r.w && r.d<shp.d) shp=r; }
+  const shape = shp.w ? { white:shp.w.slice().sort((a,b)=>a-b), special:top(sf,1)[0], fit:+shp.d.toFixed(2) } : null;
+  return { draws:rows.length, whiteFreq:wf, specialFreq:sf, ticketFusion:fusion, ticketShape:shape, gridW:GW, specialBias, methodTickets,
     ticketData:{white:md, special:top(sf,1)[0]}, ticketEdge:{white:ew, special:top(sf,1)[0]},
     history: rows.map(r=>[...r.w.slice().sort((a,b)=>a-b), r.s]),
     historyDates: rows.map(r=>r.date),
@@ -263,6 +282,7 @@ for(const [g,obj,pool,spool] of [['powerball',pb,69,26],['lottoAmerica',la,52,10
   }
   // fusion added later than the other methods — join an already-pending registration (still before its target draw)
   if(gs.pending && !gs.pending.picks.best && obj.ticketFusion) gs.pending.picks.best=obj.ticketFusion;
+  if(gs.pending && obj.ticketShape && !gs.pending.picks.shape) gs.pending.picks.shape=obj.ticketShape;
   // migrate: newly-added methods join the current pending registration (still before its target draw)
   if(gs.pending && obj.methodTickets) for(const m of ['cold','recency','momentum','markov','positional']) if(!gs.pending.picks[m]) gs.pending.picks[m]=obj.methodTickets[m];
   obj.learner={ scored:gs.scored, lastScored:gs.lastScored, totals:gs.totals, price:PRIZES[g].price,
